@@ -1,5 +1,5 @@
 from torch import nn
-from darknet53 import Darknet53
+from .darknet53 import Darknet53
 
 class PretrainHead(nn.Module):
     def __init__(self):
@@ -8,8 +8,8 @@ class PretrainHead(nn.Module):
         self.lin = nn.Linear(1024, 1000)
 
     def forward(self, x):
-        avg = nn.functional.adaptive_max_pool2d(x.unsqueeze(0), output_size=1)
-        activation = nn.functional.softmax(self.lin(avg))
+        avg = nn.functional.adaptive_max_pool2d(x, output_size=1)
+        activation = nn.functional.softmax(self.lin(avg.view(-1, 1024)))
         return activation
     
 

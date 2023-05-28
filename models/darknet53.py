@@ -9,7 +9,7 @@ class ResidualBlock(nn.Module):
 
         self.conv1 = nn.Conv2d(channels, half_c, kernel_size=1)
         self.bn1   = nn.BatchNorm2d(half_c)
-        self.conv2 = nn.Conv2d(half_c, channels, kernel_size=3)
+        self.conv2 = nn.Conv2d(half_c, channels, kernel_size=3, padding=1)
         self.bn2   = nn.BatchNorm2d(channels)
 
     def forward(self, x):
@@ -31,7 +31,7 @@ class Darknet53(nn.Module):
     def __init__(self):
         super().__init__()
 
-        self.conv1 = nn.Conv2d(3, 32, kernel_size=3)
+        self.conv1 = nn.Conv2d(3, 32, kernel_size=3, padding=1)
         self.b1    = nn.BatchNorm2d(32)
         self.down1 = createDownsamplingConv(32, 64, 1)
         self.down2 = createDownsamplingConv(64, 128, 2)
