@@ -5,6 +5,7 @@ import torch
 from torchvision import transforms
 import logging
 from tqdm import tqdm
+from huggingface_hub import login
 import os
 
 overfit = True
@@ -40,7 +41,7 @@ def pretrain_epoch_loop(train_loader, model, optimizer, loss_fn, preprocess, epo
             logging.info(f"loss at {i} iteration: {loss}")
 
         if i % len(train_loader) / 4 == 0:
-            save_checkpoint(epoch, model, optimizer,  os.path.join(checkpoint_path, model_name))
+            save_checkpoint(epoch, model, optimizer,  os.path.join(checkpoint_path, model_name), iter_start)
 
 def pretrain_validation_loop(val_lodaer, model, preprocess):
     res = []
@@ -59,6 +60,7 @@ def pretrain_validation_loop(val_lodaer, model, preprocess):
     return accuracy
 
 if __name__ == "__main__":
+    login(os.environ['HUGGINGFACE_TOKEN'])
     logging.basicConfig(format='%(asctime)s %(message)s')
     logger = logging.getLogger()
     logger.setLevel(logging.DEBUG)
