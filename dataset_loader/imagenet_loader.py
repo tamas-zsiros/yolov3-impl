@@ -7,7 +7,7 @@ import datasets
 def get_generators():
     conf = datasets.DownloadConfig(resume_download=True, use_auth_token=True)
     # dl_manager = datasets.DownloadManager("ImageNet1K", "E:\AI-Nanodegree\imagenet-1k\data", conf)
-    handler = Imagenet1k()
+    handler = Imagenet1k(data_dir="/media/tamas.zsiros/64f02c55-245d-401c-9839-2ac782c0ae04/huggingface", cache_dir="/media/tamas.zsiros/64f02c55-245d-401c-9839-2ac782c0ae04/huggingface")
 
     handler.download_and_prepare(download_config=conf)
 

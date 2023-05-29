@@ -4,6 +4,8 @@ import torch
 from torchvision import transforms
 import logging
 from tqdm import tqdm
+from huggingface_hub import login
+import os
 
 overfit = True
 cuda_id = 0
@@ -50,6 +52,7 @@ def pretrain_validation_loop(val_lodaer, model, preprocess):
     return accuracy
 
 if __name__ == "__main__":
+    login(os.environ['HUGGINGFACE_TOKEN'])
     logging.basicConfig(format='%(asctime)s %(message)s')
     logger = logging.getLogger()
     logger.setLevel(logging.DEBUG)
@@ -58,7 +61,7 @@ if __name__ == "__main__":
     logger.addHandler(file_handler)
 
 
-    train_loader, val_loader, _ = get_imagenet_torch_dataloaders(8, False, 4)
+    train_loader, val_loader, _ = get_imagenet_torch_dataloaders(16, False, 4)
 
     model = ImageNetClassifier().cuda(cuda_id).train()
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-1, weight_decay=0.0005)
@@ -66,7 +69,7 @@ if __name__ == "__main__":
 
     train_preprocess = transforms.Compose(
         [
-         transforms.AutoAugment(transforms.AutoAugmentPolicy.IMAGENET),
+         # transforms.AutoAugment(transforms.AutoAugmentPolicy.IMAGENET),
          # transforms.ToTensor(),
          transforms.ConvertImageDtype(torch.float32),
          transforms.Normalize(mean=[0.485, 0.456, 0.406],
