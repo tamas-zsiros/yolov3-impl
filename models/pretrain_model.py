@@ -9,7 +9,7 @@ class PretrainHead(nn.Module):
 
     def forward(self, x):
         avg = nn.functional.adaptive_max_pool2d(x, output_size=1)
-        activation = nn.functional.softmax(self.lin(avg.view(-1, 1024)))
+        activation = self.lin(avg.view(-1, 1024))
         return activation
     
 
