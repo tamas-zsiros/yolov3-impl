@@ -1,12 +1,16 @@
 from dataset_loader.imagenet_loader import get_imagenet_torch_dataloaders
 from models.pretrain_model import ImageNetClassifier
+from utils.checkpoint import save_checkpoint, load_checkpoint
 import torch
 from torchvision import transforms
 import logging
 from tqdm import tqdm
+import os
 
 overfit = True
 cuda_id = 0
+checkpoint_path = "./trained_models"
+model_name = "pretrained_imagenet.tar"
 def inner_train_loop(data, labels, model, optimizer, loss_fn):
     optimizer.zero_grad()
 
@@ -18,20 +22,25 @@ def inner_train_loop(data, labels, model, optimizer, loss_fn):
 
     return loss
 
-def pretrain_epoch_loop(train_loader, model, optimizer, loss_fn, preprocess):
+def pretrain_epoch_loop(train_loader, model, optimizer, loss_fn, preprocess, epoch, iter_start):
     for i, val in enumerate(train_loader):
+        if i < iter_start:
+            continue
         batch = []
         for b in val['image']:
             batch.append(preprocess(b))
         batch = torch.stack(batch)
         loss = inner_train_loop(batch, val['label'], model, optimizer, loss_fn)
 
-        if overfit and i > 1000:
+        if overfit and i > 100:
             logging.info(f"breaking in train because script is in overfit mode")
             break
 
-        if i % 100 == 0:
+        if i % 10 == 0:
             logging.info(f"loss at {i} iteration: {loss}")
+
+        if i % len(train_loader) / 4 == 0:
+            save_checkpoint(epoch, model, optimizer,  os.path.join(checkpoint_path, model_name))
 
 def pretrain_validation_loop(val_lodaer, model, preprocess):
     res = []
@@ -85,11 +94,18 @@ if __name__ == "__main__":
 
     loss_fn = torch.nn.CrossEntropyLoss()
 
-    for epoch in range(num_epochs):
-        pretrain_epoch_loop(train_loader, model, optimizer, loss_fn, train_preprocess)
+    epoch_start = 0
+    iter_start = 0
+    checkpoint_ret = load_checkpoint(epoch_start, model, optimizer, os.path.join(checkpoint_path, model_name))
+    if checkpoint_ret is not None:
+        epoch, model, optimizer, iter_start = checkpoint_ret
+        logging.info(f"loaded checkpoint from {os.path.join(checkpoint_path, model_name)}")
+
+    for epoch in range(epoch_start, num_epochs):
+        pretrain_epoch_loop(train_loader, model, optimizer, loss_fn, train_preprocess, epoch, iter_start)
         val_acc = pretrain_validation_loop(val_loader, model, val_preprocess)
         logging.info(f"validation accuracy in epoch {epoch}: {val_acc * 100} %")
-
+        save_checkpoint(epoch, model, optimizer,  os.path.join(checkpoint_path, model_name), 0)
         # if overfit:
         #     train_acc = pretrain_validation_loop(train_loader, model, val_preprocess)
         #     logging.info(f"train accuracy in epoch {epoch}: {train_acc * 100} %")
