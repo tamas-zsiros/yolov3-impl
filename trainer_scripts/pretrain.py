@@ -43,7 +43,7 @@ def pretrain_validation_loop(val_lodaer, model, preprocess):
             data = val['image']
             label = val['label'].cuda(cuda_id)
             output = model(preprocess(data.cuda(cuda_id)))
-            res.append(float(label == torch.argmax(output)))
+            res.append(int(label == torch.argmax(output)))
             if overfit and i > 100:
                 logging.info(f"breaking in validation because script is in overfit mode")
                 break
@@ -64,8 +64,8 @@ if __name__ == "__main__":
     train_loader, val_loader, _ = get_imagenet_torch_dataloaders(16, False, 4)
 
     model = ImageNetClassifier().cuda(cuda_id).train()
-    optimizer = torch.optim.Adam(model.parameters(), lr=1e-1, weight_decay=0.0005)
-    num_epochs = 10
+    optimizer = torch.optim.Adam(model.parameters(), lr=1e-5, weight_decay=0.0005)
+    num_epochs = 100
 
     train_preprocess = transforms.Compose(
         [
