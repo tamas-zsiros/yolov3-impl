@@ -108,6 +108,7 @@ if __name__ == "__main__":
         val_acc = pretrain_validation_loop(val_loader, model, val_preprocess)
         logging.info(f"validation accuracy in epoch {epoch}: {val_acc * 100} %")
         save_checkpoint(epoch, model, optimizer,  os.path.join(checkpoint_path, model_name), 0)
+        iter_start = 0
         # if overfit:
         #     train_acc = pretrain_validation_loop(train_loader, model, val_preprocess)
         #     logging.info(f"train accuracy in epoch {epoch}: {train_acc * 100} %")
