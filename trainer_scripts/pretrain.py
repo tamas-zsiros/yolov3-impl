@@ -8,8 +8,10 @@ from tqdm import tqdm
 from huggingface_hub import login
 import os
 
-overfit = True
+overfit = False
 cuda_id = 0
+checkpoint_path = "./trained_models"
+model_name = "pretrained_imagenet.tar"
 def inner_train_loop(data, labels, model, optimizer, loss_fn):
     optimizer.zero_grad()
 
@@ -35,11 +37,11 @@ def pretrain_epoch_loop(train_loader, model, optimizer, loss_fn, preprocess, epo
             logging.info(f"breaking in train because script is in overfit mode")
             break
 
-        if i % 100 == 0:
+        if i % 2500 == 0:
             logging.info(f"loss at {i} iteration: {loss}")
 
-        if i % len(train_loader) / 4 == 0:
-            save_checkpoint(epoch, model, optimizer,  os.path.join(checkpoint_path, model_name))
+        if i % (len(train_loader) / 4) == 0:
+            save_checkpoint(epoch, model, optimizer,  os.path.join(checkpoint_path, model_name), i)
 
 def pretrain_validation_loop(val_lodaer, model, preprocess):
     res = []
@@ -61,13 +63,13 @@ if __name__ == "__main__":
     login(os.environ['HUGGINGFACE_TOKEN'])
     logging.basicConfig(format='%(asctime)s %(message)s')
     logger = logging.getLogger()
-    logger.setLevel(logging.DEBUG)
+    logger.setLevel(logging.INFO)
     file_handler = logging.FileHandler("pretrain.log")
-    file_handler.setLevel(logging.DEBUG)
+    file_handler.setLevel(logging.INFO)
     logger.addHandler(file_handler)
 
 
-    train_loader, val_loader, _ = get_imagenet_torch_dataloaders(16, False, 4)
+    train_loader, val_loader, _ = get_imagenet_torch_dataloaders(24, False, 4)
 
     model = ImageNetClassifier().cuda(cuda_id).train()
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-5, weight_decay=0.0005)
@@ -75,7 +77,7 @@ if __name__ == "__main__":
 
     train_preprocess = transforms.Compose(
         [
-         # transforms.AutoAugment(transforms.AutoAugmentPolicy.IMAGENET),
+         transforms.AutoAugment(transforms.AutoAugmentPolicy.IMAGENET),
          # transforms.ToTensor(),
          transforms.ConvertImageDtype(torch.float32),
          transforms.Normalize(mean=[0.485, 0.456, 0.406],
@@ -96,16 +98,18 @@ if __name__ == "__main__":
 
     epoch_start = 0
     iter_start = 0
-    checkpoint_ret = load_checkpoint(epoch_start, model, optimizer, os.path.join(checkpoint_path, model_name))
+    checkpoint_ret = load_checkpoint(epoch_start, model, optimizer, os.path.join(checkpoint_path, model_name), iter_start)
     if checkpoint_ret is not None:
         epoch, model, optimizer, iter_start = checkpoint_ret
         logging.info(f"loaded checkpoint from {os.path.join(checkpoint_path, model_name)}")
+        logging.info(f"Continue training from {epoch} epoch, iter {iter_start}")
 
     for epoch in range(epoch_start, num_epochs):
         pretrain_epoch_loop(train_loader, model, optimizer, loss_fn, train_preprocess, epoch, iter_start)
         val_acc = pretrain_validation_loop(val_loader, model, val_preprocess)
         logging.info(f"validation accuracy in epoch {epoch}: {val_acc * 100} %")
         save_checkpoint(epoch, model, optimizer,  os.path.join(checkpoint_path, model_name), 0)
+        iter_start = 0
         # if overfit:
         #     train_acc = pretrain_validation_loop(train_loader, model, val_preprocess)
         #     logging.info(f"train accuracy in epoch {epoch}: {train_acc * 100} %")

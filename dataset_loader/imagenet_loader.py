@@ -31,6 +31,8 @@ class CustomDataset(torch.utils.data.Dataset):
         d = self.data[item]
         if d['image'].ndim == 2:
             d['image'] = d['image'].repeat(3, 1, 1).permute(1, 2, 0)
+        elif d['image'].shape[2] == 4:
+            d['image'] = d['image'][:, :, :3]
         d['image'] = self.resize(d['image'].permute(2, 0, 1))
         return d
 

@@ -1,4 +1,4 @@
-from common_layers import DownsamplerLayer
+from .common_layers import DownsamplerLayer
 from torch import nn
 
 class Darknet53(nn.Module):
