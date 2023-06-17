@@ -25,7 +25,7 @@ class CustomDataset(torch.utils.data.Dataset):
     def __init__(self, data: datasets.Dataset):
         super().__init__()
         self.data = data
-        self.resize = Resize([416, 416], antialias=True)
+        self.resize = Resize([224, 224], antialias=True)
 
     def __getitem__(self, item):
         d = self.data[item]

@@ -1,3 +1,5 @@
+import torch
+
 from .common_layers import DownsamplerLayer
 from torch import nn
 
@@ -26,8 +28,11 @@ class Darknet53(nn.Module):
         x = self.down5(x)
 
         self.output_1 = x
-        self.output_2 = self.down5.intermediate_output
-        self.output_3 = self.down4.intermediate_output
+        self.output_2 = self.down4.intermediate_output
+        self.output_3 = self.down3.intermediate_output
 
         return x
     
+if __name__=="__main__":
+    m = Darknet53()
+    m.forward(torch.rand((1, 3,416, 416)))

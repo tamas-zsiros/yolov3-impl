@@ -30,7 +30,7 @@ class DownsamplerLayer(nn.Module):
         super().__init__()
 
         self.conv1 = nn.Sequential(
-            *[nn.Conv2d(in_c, out_c, kernel_size=3, stride=2), nn.BatchNorm2d(out_c), nn.LeakyReLU()])
+            *[nn.Conv2d(in_c, out_c, kernel_size=3, stride=2, padding=1), nn.BatchNorm2d(out_c), nn.LeakyReLU()])
         res_blocks = []
         for _ in range(nr_res_blocks):
             res_blocks.append(ResidualBlock(out_c))
