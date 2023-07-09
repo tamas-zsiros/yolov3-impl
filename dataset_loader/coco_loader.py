@@ -96,17 +96,43 @@ class CustomCocoDataset(Dataset):
 
     def __getitem__(self, item):
         image, target = self.data[item]
-        d = {'image': Tensor(np.array(image)), 'target': target}
+        # pad the image, so objects don't get distorted from the resize
+        padded_img = np.array(image)
+        h, w, _ = padded_img.shape
+        dim_diff = np.abs(h - w)
+        pad1, pad2 = dim_diff // 2, dim_diff - dim_diff // 2
+        pad = ((pad1, pad2), (0, 0), (0, 0)) if h <= w else ((0, 0), (pad1, pad2), (0, 0))
+        padded_img = np.pad(padded_img, pad, 'constant', constant_values=128)
+        padded_h, padded_w, _ = padded_img.shape
+        d = {'image': Tensor(padded_img), 'target': target}
         shape = d['image'].shape
-        scales = 416 / shape[1], 416 / shape[0]
         if d['image'].ndim == 2:
             d['image'] = d['image'].repeat(3, 1, 1).permute(1, 2, 0)
         elif d['image'].shape[2] == 4:
             d['image'] = d['image'][:, :, :3]
-        d['image'] = self.resize(d['image'].permute(2, 0, 1))
+        d['image'] = self.resize(d['image'].permute(2, 0, 1)) / 255
+        shape = d['image'].shape
         for i in range(len(d['target'])):
             bbox = d['target'][i]['bbox']
-            d['target'][i]['bbox'] = [bbox[0] * scales[0], bbox[1] * scales[1], bbox[0] * scales[0] + bbox[2] * scales[0], bbox[1] * scales[1] + bbox[3] * scales[1]]
+            # adjust padding
+            x1 = bbox[0]
+            y1 = bbox[1]
+            x2 = (bbox[0] + bbox[2])
+            y2 = (bbox[1] + bbox[3])
+
+            x1 += pad[1][0]
+            y1 += pad[0][0]
+            x2 += pad[1][0]
+            y2 += pad[0][0]
+
+            # pre adjust for training -> which grid and w/h according to grid size
+            scale = [shape[1] / padded_w, shape[2] / padded_h]
+            center_x = ((x1 + x2) / 2) * scale[0] / shape[1]
+            center_y = ((y1 + y2) / 2) * scale[1] / shape[2]
+            bbox_w = (x2 - x1) * scale[0] / shape[1]
+            bbox_h = (y2 - y1) * scale[1] / shape[2]
+
+            d['target'][i]['bbox'] = [center_x, center_y, bbox_w, bbox_h]
             # annotations are not mapped from 0-79, so convert it
             d['target'][i]['category_id'] = self.id_map[str(d['target'][i]['category_id'])]
         return d
@@ -126,7 +152,7 @@ if __name__ == "__main__":
     coco_train, _ = get_coco_loader(1, False, 4)
 
     print('Number of samples: ', len(coco_train))
-    d = coco_train.dataset[4864]
+    d = coco_train.dataset[69999]
     img, target = d['image'], d['target']
     print (img.size)
     print(target)
@@ -134,7 +160,9 @@ if __name__ == "__main__":
     converted = img.permute(1,2,0).numpy().astype(np.uint8).copy()
     for t in target:
         bbox = t["bbox"]
-        converted = cv2.rectangle(converted, [int(bbox[0]), int(bbox[1])], [int(bbox[2]), int(bbox[3])], [255, 138, 86], 1)
+        converted = cv2.rectangle(converted,
+                                  [int((bbox[0] - bbox[2] / 2) * 416), int((bbox[1] - bbox[3] / 2) * 416)],
+                                  [int((bbox[0] + bbox[2] / 2) * 416), int((bbox[1] + bbox[3] / 2) * 416)], [255, 138, 86], 1)
 
     cv2.imshow("example", converted)
     cv2.waitKey()

@@ -1,5 +1,6 @@
 import logging
 import torch
+from trainer_scripts.train_common import cuda_id
 
 def save_checkpoint(epoch, model, optimizer, path, iter, scheduler):
     logging.info(f"saving checkpoint to {path}")
@@ -13,7 +14,7 @@ def save_checkpoint(epoch, model, optimizer, path, iter, scheduler):
 
 def load_checkpoint(epoch, model, optimizer, path, iter, scheduler):
     try:
-        checkpoint = torch.load(path, map_location=lambda storage, loc: storage.cuda(0))
+        checkpoint = torch.load(path, map_location=lambda storage, loc: storage.cuda(cuda_id))
         model.load_state_dict(checkpoint['model_state_dict'])
         optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
         scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
@@ -26,8 +27,9 @@ def load_checkpoint(epoch, model, optimizer, path, iter, scheduler):
 
 def load_only_model_from_checkpoint(path, model):
     try:
-        checkpoint = torch.load(path, map_location=lambda storage, loc: storage.cuda(0))
+        checkpoint = torch.load(path, map_location=lambda storage, loc: storage.cuda(cuda_id))
         model.load_state_dict(checkpoint['model_state_dict'])
+        return model
     except BaseException as e:
         logging.error(f"failed to load checkpoint: {e}")
         return model

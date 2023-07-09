@@ -1,10 +1,12 @@
 import logging
 
+import numpy as np
 import torch
 from torchvision.ops import box_iou
 from models.yolo_v3 import DetectorHead
 from typing import List, Dict
 from trainer_scripts.train_common import cuda_id
+
 
 class BboxLoss:
     def __init__(self, class_number: int = 80, res: int = 416):
@@ -36,119 +38,99 @@ class BboxLoss:
         self.priori_bboxes = torch.concat(self.priori_bboxes)
         self.grid_indices = torch.concat(self.grid_indices)
 
-        self.class_loss_criterion = torch.nn.BCEWithLogitsLoss()
-        self.obj_loss_criterion = torch.nn.BCEWithLogitsLoss()
+        self.class_loss_criterion = torch.nn.BCELoss(reduction='sum')
+        self.obj_loss_criterion = torch.nn.BCELoss(reduction='sum')
 
         self.anchors = torch.Tensor(self.anchors)
 
-    def __call__(self, predictions: List[torch.Tensor], gt_batch, verbose = False) -> Dict:
+    def __call__(self, predictions: List[torch.Tensor], gt_batch, verbose=False) -> Dict:
         # predictions: layer x batch x (nr_classes+5) x N x N
-        loss = {'class_loss': 0.0, 'bbox_loss': 0.0, 'obj_loss': 0.0}
+        loss = {'class_loss': 0.0, 'bbox_loss': {'x': 0.0, 'y': 0.0, 'w': 0.0, 'h': 0.0}, 'obj_loss': 0.0}
         obj_counter = 0
         bbox_counter = 0
+        predicted_bboxes = []
 
         printed_one_batch = False
         for batch, gt in enumerate(gt_batch):
+            predicted_bboxes.append([])
             if not gt:
                 continue
             gt_boxes = []
+            class_ids = []
+            if isinstance(gt[0], list):
+                gt = gt[0]
             for t in gt:
                 gt_boxes.append(t['bbox'])
+                class_ids.append(t['category_id'])
 
             gt_boxes = torch.Tensor(gt_boxes)
 
-            ious = box_iou(self.priori_bboxes, gt_boxes)
-
-            max_ious, max_indices = torch.max(ious, dim=0)
-            mask = torch.all(ious < 0.5, dim=1)   # ignore overlaps that are more than 0.5 but not the max
-            mask[max_indices] = True
-
-            transformed_indices = [[], [], []]   # layer and index within it
-            non_transformed_indices = [[], [], []]
-
-            small_objectness = torch.zeros((1, 3, predictions[0].shape[2], predictions[0].shape[2]), dtype=torch.float32).cuda(cuda_id)
-            med_objectness = torch.zeros((1, 3, predictions[1].shape[2], predictions[1].shape[2]), dtype=torch.float32).cuda(cuda_id)
-            big_objectness = torch.zeros((1, 3, predictions[2].shape[2], predictions[2].shape[2]), dtype=torch.float32).cuda(cuda_id)
-            objectness_gt = [small_objectness, med_objectness, big_objectness]
-
-            small_classes = torch.zeros((1, 3, self.class_number, predictions[0].shape[2], predictions[0].shape[2]), dtype=torch.float32).cuda(cuda_id)
-            med_classes = torch.zeros((1, 3, self.class_number, predictions[1].shape[2], predictions[1].shape[2]), dtype=torch.float32).cuda(cuda_id)
-            big_classes = torch.zeros((1, 3, self.class_number, predictions[2].shape[2], predictions[2].shape[2]), dtype=torch.float32).cuda(cuda_id)
-            classes_gt = [small_classes, med_classes, big_classes]
-
-            remapped_gt_boxes = [[], [], []]
-
-            for bbox_id, ind in enumerate(max_indices):
-                if gt[bbox_id]['category_id'] > 79:
-                    logging.error(f"invalid category id: {gt[bbox_id]['category_id']}")
-                    continue
-                layer = 0 if ind < self.priori_index_borders[0] else 1 if ind < self.priori_index_borders[1] else 2
-                transformed_indices[layer].append(self.grid_indices[ind])
-                non_transformed_indices[layer].append(ind)
-                i,j,k = self.grid_indices[ind]
-                objectness_gt[layer][0, int(i // (self.class_number + 5)), j, k] = 1.0
-                classes_gt[layer][0, int(i // (self.class_number + 5)), gt[bbox_id]['category_id'], j, k] = 1.0
-                gt_boxes[bbox_id][2] -= gt_boxes[bbox_id][0]  # width
-                gt_boxes[bbox_id][3] -= gt_boxes[bbox_id][1]  # height
-                remapped_gt_boxes[layer].append(gt_boxes[bbox_id].cuda(cuda_id))
-
             for i, l in enumerate(predictions):
-                for bbox_id, feature_map_index in enumerate(transformed_indices[i]):
-                    used_predictions = l[batch, feature_map_index[0]: feature_map_index[0] + 1 * 85 if feature_map_index[0] != 2 else -1,
-                                       feature_map_index[1], feature_map_index[2]]
-                    offsets = self.priori_bboxes[non_transformed_indices[i][bbox_id]][:2]
-                    priori_w = self.priori_bboxes[non_transformed_indices[i][bbox_id]][2] - self.priori_bboxes[non_transformed_indices[i][bbox_id]][0]
-                    priori_h = self.priori_bboxes[non_transformed_indices[i][bbox_id]][3] - self.priori_bboxes[non_transformed_indices[i][bbox_id]][1]
+                # obj loss occurs in all grids
+                objectness_gt = torch.zeros((1, 3, predictions[i].shape[2], predictions[i].shape[2]),
+                                            dtype=torch.float32).cuda(cuda_id)
+                objectness_mask = torch.ones((1, 3, predictions[i].shape[2], predictions[i].shape[2]),
+                                            dtype=torch.bool).cuda(cuda_id)
+                for class_id, gt_box in zip(class_ids, gt_boxes):
+                    gt_center_x = gt_box[0] * self.grid_numbers[i]
+                    gt_center_y = gt_box[1] * self.grid_numbers[i]
+                    gt_w = gt_box[2] * self.grid_numbers[i]
+                    gt_h = gt_box[3] * self.grid_numbers[i]
 
-                    # pred_centerx = used_predictions[-4].sigmoid() * self.grid_sizes[i] + offsets[0]
-                    # pred_centery = used_predictions[-3].sigmoid() * self.grid_sizes[i] + offsets[1]
+                    grid_i, grid_j = int(gt_center_x), int(gt_center_y)
+                    gt_box = torch.FloatTensor([0, 0, gt_w, gt_h]).unsqueeze(0)
+                    anchor_boxes = torch.FloatTensor(np.concatenate(
+                        [np.zeros((len(self.anchors[i]), 2)), np.array(self.anchors[i] / self.grid_sizes[i])], 1
+                    ))
+                    ious = box_iou(anchor_boxes, gt_box)
+                    max_iou, max_index = torch.max(ious, dim=0)
+
+                    # offset from the top left corner
+                    tx = (gt_center_x - grid_i).cuda(cuda_id)
+                    ty = (gt_center_y - grid_j).cuda(cuda_id)
+                    # gt box w/h is also in ratio to the img size -> scale the boxes according to the grid size
+                    tw = torch.log(gt_w / (self.anchors[i][max_index][:, 0] / self.grid_sizes[i]) + 1e-9).cuda(cuda_id)
+                    th = torch.log(gt_h / (self.anchors[i][max_index][:, 1] / self.grid_sizes[i]) + 1e-9).cuda(cuda_id)
+
+                    prediction_index = max_index * 85, (max_index + 1) * 85 if max_index != 2 else -1
+
+                    used_predictions = l[batch, prediction_index[0]: prediction_index[1], grid_i, grid_j]
+
                     pred_centerx = used_predictions[-4].sigmoid()
                     pred_centery = used_predictions[-3].sigmoid()
-                    # pred_w = priori_w * torch.exp(used_predictions[-2])
-                    pred_w = torch.exp(used_predictions[-2])
-                    # pred_h = priori_h * torch.exp(used_predictions[-1])
-                    pred_h = torch.exp(used_predictions[-1])
+                    pred_w = used_predictions[-2]
+                    pred_h = used_predictions[-1]
 
-                    # pred_x = pred_centerx - pred_w / 2
-                    # pred_y = pred_centery - pred_h / 2
-                    # pred_x2 = pred_centerx + pred_w / 2
-                    # pred_y2 = pred_centery + pred_h / 2
+                    loss['bbox_loss']['x'] += torch.nn.functional.mse_loss(pred_centerx, tx)
+                    loss['bbox_loss']['y'] += torch.nn.functional.mse_loss(pred_centery, ty)
+                    loss['bbox_loss']['w'] += torch.nn.functional.mse_loss(pred_w, tw.squeeze())
+                    loss['bbox_loss']['h'] += torch.nn.functional.mse_loss(pred_h, th.squeeze())
 
-                    gt_center_x = remapped_gt_boxes[i][bbox_id][0] + remapped_gt_boxes[i][bbox_id][2]/ 2.0
-                    gt_center_y = remapped_gt_boxes[i][bbox_id][1] + remapped_gt_boxes[i][bbox_id][3] / 2.0
-                    gt_x = (gt_center_x - offsets[0]) / priori_w
-                    gt_y = (gt_center_y - offsets[1]) / priori_h
+                    objectness_gt[0, max_index, grid_i, grid_j] = 1
+                    for iou_index in range(len(ious)):
+                        if iou_index == max_index:
+                            continue
+                        if ious[iou_index] > 0.5:
+                            objectness_mask[0, iou_index, grid_i, grid_j] = False
 
-                    gt_w = remapped_gt_boxes[i][bbox_id][2] / priori_w
-                    gt_h = remapped_gt_boxes[i][bbox_id][3] / priori_h
+                    classes_gt = torch.zeros((1, self.class_number), dtype=torch.float32).cuda(cuda_id)
+                    classes_gt[0, class_id] = 1.0
+                    loss['class_loss'] += self.class_loss_criterion(used_predictions[1:self.class_number+1].sigmoid(), classes_gt.squeeze())
+                    bbox_counter += 1
+                    predicted_bboxes[batch].append([pred_centerx.cpu() + grid_i, pred_centery.cpu() + grid_j,
+                                                    torch.exp(pred_w.cpu()) * (self.anchors[i][max_index][:, 0] / self.grid_sizes[i]),
+                                                    torch.exp(pred_h.cpu()) * (self.anchors[i][max_index][:, 1] / self.grid_sizes[i])])
 
-                    predicted_bboxes = torch.unsqueeze(torch.FloatTensor([pred_centerx, pred_centery, pred_w, pred_h]).cuda(cuda_id),dim=0)
-                    # used_gt_box = torch.unsqueeze(remapped_gt_boxes[i][bbox_id], dim=0)
-                    transformed_gt_bboxes = torch.FloatTensor([gt_x, gt_y, gt_w, gt_h]).cuda(cuda_id)
-                    if verbose and not printed_one_batch or True:
-                        logging.info(f"bbox loss { torch.nn.functional.mse_loss(predicted_bboxes, transformed_gt_bboxes)}, \n gt box: \n\t{remapped_gt_boxes[i][bbox_id]} \n calc_box \n\t"
-                              f" {[pred_centerx * pred_w + offsets[0], pred_centery * pred_h + offsets[1], pred_w * priori_w, pred_h * priori_h]}")
-                    loss['bbox_loss'] += torch.nn.functional.mse_loss(predicted_bboxes, transformed_gt_bboxes)
-
-                    # loss['bbox_loss'] += 1.0 - box_iou(predicted_bboxes, used_gt_box).squeeze()
-                    cl = 0.0
-
-                    loss['class_loss'] += self.class_loss_criterion(used_predictions[1:self.class_number+1],
-                                                        classes_gt[i][0, int(feature_map_index[0] // (self.class_number + 5)), :, feature_map_index[1], feature_map_index[2]])
-                    bbox_counter +=1
-                mask_start = self.priori_index_borders[i - 1] if i > 0 else 0
-                mask_end = self.priori_index_borders[i]
-                loss['obj_loss'] += self.obj_loss_criterion(torch.flatten(l[batch, 0:255:85])[mask[mask_start:mask_end]], torch.flatten(objectness_gt[i])[mask[mask_start:mask_end]])
-                obj_counter +=1
-
-            printed_one_batch = True
+                loss['obj_loss'] += self.obj_loss_criterion(torch.flatten(l[batch, 0:255:85]).sigmoid()[torch.flatten(objectness_mask)], torch.flatten(objectness_gt[objectness_mask]))
+                obj_counter += 1
 
         if obj_counter > 0:
             loss['obj_loss'] /= obj_counter
         if bbox_counter > 0:
-            loss['bbox_loss'] /= bbox_counter
+            loss['bbox_loss']['x'] /= bbox_counter
+            loss['bbox_loss']['y'] /= bbox_counter
+            loss['bbox_loss']['w'] /= bbox_counter
+            loss['bbox_loss']['h'] /= bbox_counter
             loss['class_loss'] /= bbox_counter
 
-        return loss
-
-
+        return loss, predicted_bboxes

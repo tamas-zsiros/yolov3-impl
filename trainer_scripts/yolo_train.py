@@ -9,9 +9,11 @@ from models.yolo_v3 import YoloV3
 from models.darknet53 import Darknet53
 from torchvision import transforms
 from utils.bbox_loss import BboxLoss
+from eval_yolo import eval
 
 model_name = "yolo_first_try.tar"
 overfit = False
+save = True
 
 def yolo_epoch_loop(train_loader, model, optimizer, loss_fn, preprocess, epoch, iter_start, scheduler):
     for i, val in enumerate(train_loader):
@@ -26,7 +28,7 @@ def yolo_epoch_loop(train_loader, model, optimizer, loss_fn, preprocess, epoch, 
             continue
         loss = inner_train_loop(batch, val['target'], model, optimizer, loss_fn)
 
-        if overfit and i > 10:
+        if overfit and i > 1000:
             logging.info(f"breaking in train because script is in overfit mode")
             break
 
@@ -36,59 +38,80 @@ def yolo_epoch_loop(train_loader, model, optimizer, loss_fn, preprocess, epoch, 
                 msg += f"\t {key}: {val} \n"
             logging.info(f"loss at {i} iteration: {msg}")
 
-        if i % (len(train_loader) / 4) == 0:
-            save_checkpoint(epoch, model, optimizer,  os.path.join(checkpoint_path, model_name), i, scheduler)
+        if i % (len(train_loader) // 4) == 0 and save:
+            save_checkpoint(epoch, model.head, optimizer,  os.path.join(checkpoint_path, model_name), i, scheduler)
 
-def yolo_validation_loop(val_lodaer, model, preprocess):
+def yolo_validation_loop(val_loader, model, preprocess):
     res = []
     model.eval()
     loss = 0.0
     loss_fn = BboxLoss(80)
+    precision, recall = 0.0, 0.0
     with torch.no_grad():
-        for i, val in tqdm(enumerate(val_lodaer)):
+        for i, val in tqdm(enumerate(val_loader)):
             data = val['image']
             output = model(preprocess(data.cuda(cuda_id)))
-            loss += sum(loss_fn(output, [val['target']]).values())
+            l, predicted_bboxes = loss_fn(output, [val['target']])
+            sum_loss = 0
+
+            def acc_loss(loss, s):
+                if isinstance(loss, dict):
+                    for val in loss.values():
+                        if isinstance(val, dict):
+                            s = acc_loss(val, s)
+                        else:
+                            s += val
+                else:
+                    s = loss
+                return s
+
+            sum_loss = acc_loss(l, sum_loss)
+            loss += sum_loss
             res.append(1)
-            if overfit and i > 10:
+            _, prec, rec = eval(output, val['target'], 416)
+            precision += prec
+            recall += rec
+            if i > 500:
                 break
 
     model.train()
-    return loss / len(res)
+    return loss / len(res), prec / len(res), rec / len(res)
 
 if __name__ == "__main__":
     setup_logger("yolo_train.log")
-    train_loader, val_loader = get_coco_loader(80, False, 4)
+    train_loader, val_loader = get_coco_loader(20, False, 4)
+    if overfit:
+        val_loader, _ = get_coco_loader(1, False, 1)
 
     backbone = Darknet53()
     model = YoloV3(80, backbone).cuda(cuda_id).train()
     model = load_only_model_from_checkpoint(os.path.join(checkpoint_path, "pretrained_imagenet.tar"), model)
-    for param in model.backbone.parameters():
-        param.requires_grad = False
+    # for param in model.backbone.parameters():
+    #     param.requires_grad = False
 
-    if model is None:
+    if backbone is None:
         logging.error(f"failed to load backbone from {os.path.join(checkpoint_path, 'pretrained_imagenet.tar')}")
         exit(10)
 
     model.train()
 
-    optimizer = torch.optim.Adam(model.parameters(), lr=1e-3, weight_decay=0.0005)
-    num_epochs = 50
-    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=30)
+    optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=1e-4, weight_decay=0.0005)
+    num_epochs = 120
+    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=40)
 
     train_preprocess = transforms.Compose(
         [
-         transforms.ConvertImageDtype(torch.float32),
-         transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                                std=[0.229, 0.224, 0.225])
+            transforms.ConvertImageDtype(torch.float32),
+            # transforms.Normalize(mean=[0.0, 0.0, 0.0],
+            #                      std=[0.229, 0.224, 0.225])
         ]
     )
 
     val_preprocess = transforms.Compose(
         [
-         transforms.ConvertImageDtype(torch.float32),
-         transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                                std=[0.229, 0.224, 0.225])
+            transforms.ConvertImageDtype(torch.float32),
+            # transforms.Normalize(mean=[0.0, 0.0, 0.0],
+            #                      std=[0.229, 0.224, 0.225])
         ]
     )
 
@@ -96,18 +119,33 @@ if __name__ == "__main__":
 
     epoch_start = 0
     iter_start = 0
-    checkpoint_ret = load_checkpoint(epoch_start, model, optimizer, os.path.join(checkpoint_path, model_name), iter_start, scheduler)
+    checkpoint_ret = load_checkpoint(epoch_start, model.head, optimizer, os.path.join(checkpoint_path, model_name), iter_start, scheduler)
     if checkpoint_ret is not None:
-        epoch, model, optimizer, iter_start, scheduler = checkpoint_ret
+        epoch_start, model.head, optimizer, iter_start, scheduler = checkpoint_ret
         logging.info(f"loaded checkpoint from {os.path.join(checkpoint_path, model_name)}")
-        logging.info(f"Continue training from {epoch} epoch, iter {iter_start}")
+        logging.info(f"Continue training from {epoch_start} epoch, iter {iter_start}")
+
+    skip_to_val = False
+
+    logging.info(f"current LR: {optimizer.param_groups[0]['lr']}")
 
     for epoch in range(epoch_start, num_epochs):
-        yolo_epoch_loop(train_loader, model, optimizer, loss_fn, train_preprocess, epoch, iter_start, scheduler)
-        val_acc = yolo_validation_loop(val_loader, model, val_preprocess)
-        logging.info(f"validation accuracy in epoch {epoch}: {val_acc } ")
-        save_checkpoint(epoch, model, optimizer,  os.path.join(checkpoint_path, model_name), 0, scheduler)
+        if not skip_to_val:
+            yolo_epoch_loop(train_loader, model, optimizer, loss_fn, train_preprocess, epoch, iter_start, scheduler)
+        val_loss, precision, recall = yolo_validation_loop(val_loader, model, val_preprocess)
+        skip_to_val = False
+        logging.info(f"validation loss in epoch {epoch}: {val_loss }, precision {precision*100}%, recall {recall * 100}% ")
+        if save:
+            save_checkpoint(epoch, model, optimizer, os.path.join(checkpoint_path, "yolo_full_proper_div.tar"), 0,
+                            scheduler)
+            # save_checkpoint(epoch, model.head, optimizer,  os.path.join(checkpoint_path, model_name), 0, scheduler)
         iter_start = 0
+        logging.info(f"current LR: {scheduler.get_lr()}")
         scheduler.step()
 
-    save_checkpoint(epoch, model, optimizer, os.path.join(checkpoint_path, model_name), 0, scheduler)
+        # if epoch == 60:
+        #     for param in model.backbone.parameters():
+        #         param.requires_grad = False
+
+    if save:
+        save_checkpoint(epoch, model.head, optimizer, os.path.join(checkpoint_path, model_name), 0, scheduler)
