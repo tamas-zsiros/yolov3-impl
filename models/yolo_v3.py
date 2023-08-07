@@ -2,6 +2,7 @@ import torch
 from torch import nn
 from .common_layers import ResidualBlock
 from .darknet53 import Darknet53
+from .stolen_darknet53 import darknet53
 
 
 class DetectorHead(nn.Module):
@@ -73,7 +74,7 @@ class DetectorHead(nn.Module):
 
 
 class YoloV3(nn.Module):
-    def __init__(self, class_number: int, backbone: Darknet53):
+    def __init__(self, class_number: int, backbone):
         super().__init__()
 
         self.backbone = backbone
@@ -84,5 +85,5 @@ class YoloV3(nn.Module):
         return self.head(self.backbone.output_1, self.backbone.output_2, self.backbone.output_3)
 
 if __name__=="__main__":
-    m = YoloV3(80, Darknet53())
-    m.forward(torch.rand((1, 3,416, 416)))
+    m = YoloV3(80, darknet53(1000))
+    m.forward(torch.rand((1, 3, 416, 416)))

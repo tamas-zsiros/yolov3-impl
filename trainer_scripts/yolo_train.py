@@ -7,6 +7,7 @@ from tqdm import tqdm
 from dataset_loader.coco_loader import get_coco_loader
 from models.yolo_v3 import YoloV3
 from models.darknet53 import Darknet53
+from models.stolen_darknet53 import darknet53
 from torchvision import transforms
 from utils.bbox_loss import BboxLoss
 from eval_yolo import eval
@@ -79,15 +80,20 @@ def yolo_validation_loop(val_loader, model, preprocess):
 
 if __name__ == "__main__":
     setup_logger("yolo_train.log")
-    train_loader, val_loader = get_coco_loader(20, False, 4)
+    back_bone_model_name = "pretrained_darknet.pth.tar"
+    train_loader, val_loader = get_coco_loader(75, False, 4)
     if overfit:
         val_loader, _ = get_coco_loader(1, False, 1)
 
     backbone = Darknet53()
     model = YoloV3(80, backbone).cuda(cuda_id).train()
-    model = load_only_model_from_checkpoint(os.path.join(checkpoint_path, "pretrained_imagenet.tar"), model)
-    # for param in model.backbone.parameters():
-    #     param.requires_grad = False
+    # model = load_only_model_from_checkpoint(os.path.join(checkpoint_path, "pretrained_imagenet.tar"), model)
+
+    backbone = darknet53(1000).cuda(cuda_id).eval()
+    backbone = load_only_model_from_checkpoint(os.path.join(checkpoint_path, back_bone_model_name), backbone)
+    model.backbone = backbone
+    for param in model.backbone.parameters():
+        param.requires_grad = False
 
     if backbone is None:
         logging.error(f"failed to load backbone from {os.path.join(checkpoint_path, 'pretrained_imagenet.tar')}")
@@ -99,21 +105,29 @@ if __name__ == "__main__":
     num_epochs = 120
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=40)
 
-    train_preprocess = transforms.Compose(
-        [
-            transforms.ConvertImageDtype(torch.float32),
-            # transforms.Normalize(mean=[0.0, 0.0, 0.0],
-            #                      std=[0.229, 0.224, 0.225])
-        ]
-    )
+    normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                                     std=[0.229, 0.224, 0.225])
+    val_preprocess = transforms.Compose([
+        transforms.CenterCrop(416),
+        # transforms.ToTensor(),
+        transforms.ConvertImageDtype(torch.float),
+        normalize,
+    ])
 
-    val_preprocess = transforms.Compose(
-        [
-            transforms.ConvertImageDtype(torch.float32),
-            # transforms.Normalize(mean=[0.0, 0.0, 0.0],
-            #                      std=[0.229, 0.224, 0.225])
-        ]
-    )
+    train_preprocess = transforms.Compose([
+        transforms.CenterCrop(416),
+        # transforms.ToTensor(),
+        transforms.ConvertImageDtype(torch.float),
+        normalize,
+    ])
+
+    # val_preprocess = transforms.Compose(
+    #     [
+    #         transforms.ConvertImageDtype(torch.float32),
+    #         # transforms.Normalize(mean=[0.0, 0.0, 0.0],
+    #         #                      std=[0.229, 0.224, 0.225])
+    #     ]
+    # )
 
     loss_fn = BboxLoss()
 
@@ -136,7 +150,7 @@ if __name__ == "__main__":
         skip_to_val = False
         logging.info(f"validation loss in epoch {epoch}: {val_loss }, precision {precision*100}%, recall {recall * 100}% ")
         if save:
-            save_checkpoint(epoch, model, optimizer, os.path.join(checkpoint_path, "yolo_full_proper_div.tar"), 0,
+            save_checkpoint(epoch, model, optimizer, os.path.join(checkpoint_path, "yolo_with_stolen_backbone.tar"), 0,
                             scheduler)
             # save_checkpoint(epoch, model.head, optimizer,  os.path.join(checkpoint_path, model_name), 0, scheduler)
         iter_start = 0

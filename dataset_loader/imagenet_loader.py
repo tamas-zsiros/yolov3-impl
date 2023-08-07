@@ -1,5 +1,7 @@
 import torch.utils.data
 from torchvision.transforms import Resize
+from torchvision import transforms
+
 from torch.utils.data import BatchSampler, DataLoader
 from .imagenet_1k import Imagenet1k
 import datasets
@@ -25,7 +27,17 @@ class CustomDataset(torch.utils.data.Dataset):
     def __init__(self, data: datasets.Dataset):
         super().__init__()
         self.data = data
-        self.resize = Resize([224, 224], antialias=True)
+        self.resize = Resize([256, 256], antialias=True)
+
+        normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                                         std=[0.229, 0.224, 0.225])
+        self.val_preprocess = transforms.Compose([
+            transforms.Resize(456),
+            transforms.CenterCrop(416),
+            # transforms.ToTensor(),
+            transforms.ConvertImageDtype(torch.float),
+            normalize,
+        ])
 
     def __getitem__(self, item):
         d = self.data[item]
@@ -33,7 +45,7 @@ class CustomDataset(torch.utils.data.Dataset):
             d['image'] = d['image'].repeat(3, 1, 1).permute(1, 2, 0)
         elif d['image'].shape[2] == 4:
             d['image'] = d['image'][:, :, :3]
-        d['image'] = self.resize(d['image'].permute(2, 0, 1))
+        d['image'] = self.val_preprocess(d['image'].permute(2, 0, 1))
         return d
 
     def __len__(self):

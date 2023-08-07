@@ -2,6 +2,7 @@ import torch
 import numpy as np
 from torchvision.ops import box_iou
 from models.yolo_v3 import DetectorHead
+from models.stolen_darknet53 import darknet53
 from train_common import cuda_id
 def convert_bbox(gt_box, res):
     #from relative of image to real x1y1, x2y2
@@ -125,7 +126,7 @@ def eval(output, target, res, img = None, obj_th = 0.5):
     if isinstance(target[0], list):
         target = target[0]
     if img is not None:
-        np_img = (img[0].cpu().permute(1, 2, 0) * 255).to(torch.uint8).numpy().copy()
+        np_img = (img[0].cpu().permute(1, 2, 0)).to(torch.uint8).numpy().copy()
     for t in target:
         converted_bbox = convert_bbox(t['bbox'], res).unsqueeze(0).cuda(cuda_id)
         class_id = t['category_id']
@@ -141,10 +142,13 @@ def eval(output, target, res, img = None, obj_th = 0.5):
                 iou = box_iou(pred_box, converted_bbox)
                 pred_label = sp[-1].int().cpu()
                 if img is not None:
-                    np_img = cv2.rectangle(np_img,
+                    try:
+                        np_img = cv2.rectangle(np_img,
                                               [int(pred_box[0][0]), int(pred_box[0][1])],
                                                [int(pred_box[0][2]), int(pred_box[0][3])],
                                               [int(class_id) * 3, 138, 255], 1)
+                    except BaseException as e:
+                        continue
                 if iou > 0.5 and pred_label == class_id:
                     number_of_true_positive += 1
     if img is not None:
@@ -171,19 +175,26 @@ if __name__ == "__main__":
     from utils.bbox_loss import BboxLoss
     import cv2
 
-    model_name = "yolo_full_proper_div.tar"
+    model_name = "yolo_with_stolen_backbone.tar"
+    back_bone_model_name = "pretrained_darknet.pth.tar"
+
     _, val_loader = get_coco_loader(1, False, 1)
-    backbone = Darknet53()
-    model = YoloV3(80, backbone).cuda(cuda_id).train()
+    backbone = darknet53(1000).cuda(cuda_id).eval()
+    model = YoloV3(80, backbone).cuda(cuda_id).eval()
     model = load_only_model_from_checkpoint(os.path.join(checkpoint_path, model_name), model)
 
-    val_preprocess = transforms.Compose(
-        [
-            transforms.ConvertImageDtype(torch.float32),
-            # transforms.Normalize(mean=[0.485, 0.456, 0.406],
-            #                      std=[0.229, 0.224, 0.225])
-        ]
-    )
+    backbone = darknet53(1000).cuda(cuda_id).eval()
+    backbone = load_only_model_from_checkpoint(os.path.join(checkpoint_path, back_bone_model_name), backbone)
+    model.backbone = backbone
+
+    normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                                     std=[0.229, 0.224, 0.225])
+    val_preprocess = transforms.Compose([
+        transforms.CenterCrop(416),
+        # transforms.ToTensor(),
+        transforms.ConvertImageDtype(torch.float),
+        normalize,
+    ])
 
 
     model.eval()
@@ -218,7 +229,7 @@ if __name__ == "__main__":
                 sum_loss = acc_loss(l, sum_loss)
                 loss += sum_loss
                 res.append(1)
-                _, prec, rec = eval(output, val['target'], 416, obj_th=th)
+                _, prec, rec = eval(output, val['target'], 416, data, obj_th=th)
                 precision += prec
                 recall += rec
                 if i > 100:

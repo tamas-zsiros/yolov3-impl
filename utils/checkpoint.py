@@ -28,7 +28,10 @@ def load_checkpoint(epoch, model, optimizer, path, iter, scheduler):
 def load_only_model_from_checkpoint(path, model):
     try:
         checkpoint = torch.load(path, map_location=lambda storage, loc: storage.cuda(cuda_id))
-        model.load_state_dict(checkpoint['model_state_dict'])
+        if 'model_state_dict' in checkpoint:
+            model.load_state_dict(checkpoint['model_state_dict'])
+        else:
+            model.load_state_dict(checkpoint['state_dict'])
         return model
     except BaseException as e:
         logging.error(f"failed to load checkpoint: {e}")

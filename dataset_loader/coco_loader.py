@@ -110,7 +110,7 @@ class CustomCocoDataset(Dataset):
             d['image'] = d['image'].repeat(3, 1, 1).permute(1, 2, 0)
         elif d['image'].shape[2] == 4:
             d['image'] = d['image'][:, :, :3]
-        d['image'] = self.resize(d['image'].permute(2, 0, 1)) / 255
+        d['image'] = self.resize(d['image'].permute(2, 0, 1))
         shape = d['image'].shape
         for i in range(len(d['target'])):
             bbox = d['target'][i]['bbox']
