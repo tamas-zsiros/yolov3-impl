@@ -13,14 +13,14 @@ from utils.bbox_loss import BboxLoss
 from eval_yolo import eval
 
 model_name = "yolo_first_try.tar"
-overfit = False
-save = True
+overfit = True
+save = False
 
 def yolo_epoch_loop(train_loader, model, optimizer, loss_fn, preprocess, epoch, iter_start, scheduler):
     for i, val in enumerate(train_loader):
         if i < iter_start:
             continue
-        verbose = i % 500 == 0
+        verbose = i % 5 == 0
         batch = []
         for b in val['image']:
             batch.append(preprocess(b))
@@ -29,7 +29,7 @@ def yolo_epoch_loop(train_loader, model, optimizer, loss_fn, preprocess, epoch, 
             continue
         loss = inner_train_loop(batch, val['target'], model, optimizer, loss_fn)
 
-        if overfit and i > 1000:
+        if overfit and i > 50:
             logging.info(f"breaking in train because script is in overfit mode")
             break
 

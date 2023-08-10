@@ -78,11 +78,11 @@ class BboxLoss:
                     gt_h = gt_box[3] * self.grid_numbers[i]
 
                     grid_i, grid_j = int(gt_center_x), int(gt_center_y)
-                    gt_box = torch.FloatTensor([0, 0, gt_w, gt_h]).unsqueeze(0)
+                    gt_box_t = torch.FloatTensor([0, 0, gt_w, gt_h]).unsqueeze(0)
                     anchor_boxes = torch.FloatTensor(np.concatenate(
                         [np.zeros((len(self.anchors[i]), 2)), np.array(self.anchors[i] / self.grid_sizes[i])], 1
                     ))
-                    ious = box_iou(anchor_boxes, gt_box)
+                    ious = box_iou(anchor_boxes, gt_box_t)
                     max_iou, max_index = torch.max(ious, dim=0)
 
                     # offset from the top left corner
