@@ -88,6 +88,7 @@ def _get_single_dataset(data_path: str, json_path:str) -> dset:
                                 annFile = json_path)
 
 class CustomCocoDataset(Dataset):
+    max_det_num = 100
     def __init__(self, data: dset):
         super().__init__()
         self.data = data
@@ -104,7 +105,7 @@ class CustomCocoDataset(Dataset):
         pad = ((pad1, pad2), (0, 0), (0, 0)) if h <= w else ((0, 0), (pad1, pad2), (0, 0))
         padded_img = np.pad(padded_img, pad, 'constant', constant_values=128)
         padded_h, padded_w, _ = padded_img.shape
-        d = {'image': Tensor(padded_img), 'target': target}
+        d = {'image': Tensor(padded_img) / 255.0, 'target': target}
         shape = d['image'].shape
         if d['image'].ndim == 2:
             d['image'] = d['image'].repeat(3, 1, 1).permute(1, 2, 0)
@@ -112,7 +113,10 @@ class CustomCocoDataset(Dataset):
             d['image'] = d['image'][:, :, :3]
         d['image'] = self.resize(d['image'].permute(2, 0, 1))
         shape = d['image'].shape
+        transformed_target = np.zeros([CustomCocoDataset.max_det_num, 5])
         for i in range(len(d['target'])):
+            if i >= CustomCocoDataset.max_det_num:
+                break
             bbox = d['target'][i]['bbox']
             # adjust padding
             x1 = bbox[0]
@@ -134,7 +138,9 @@ class CustomCocoDataset(Dataset):
 
             d['target'][i]['bbox'] = [center_x, center_y, bbox_w, bbox_h]
             # annotations are not mapped from 0-79, so convert it
-            d['target'][i]['category_id'] = self.id_map[str(d['target'][i]['category_id'])]
+            # d['target'][i]['category_id'] = self.id_map[str(d['target'][i]['category_id'])]
+            transformed_target[i] = np.array([self.id_map[str(d['target'][i]['category_id'])], center_x, center_y, bbox_w, bbox_h])
+        d['target'] = transformed_target
         return d
 
     def __len__(self):
@@ -142,7 +148,7 @@ class CustomCocoDataset(Dataset):
 
 
 def get_coco_loader(batch_size, shuffle, workers):
-    train_torch_loader = DataLoader(CustomCocoDataset(_get_single_dataset(path2train_data, path2train_json)), batch_size=batch_size, shuffle=shuffle, num_workers=workers, collate_fn=custom_collate)
+    train_torch_loader = DataLoader(CustomCocoDataset(_get_single_dataset(path2train_data, path2train_json)), batch_size=batch_size, shuffle=shuffle, num_workers=workers)
     val_torch_loader = DataLoader(CustomCocoDataset(_get_single_dataset(path2val_data, path2val_json)), batch_size=1, shuffle=False, num_workers=workers)
     # test_torch_loader = DataLoader(_get_single_dataset(path2test_data, path2test_json), batch_size=batch_size, shuffle=False, num_workers=workers)
     return train_torch_loader, val_torch_loader#, test_torch_loader

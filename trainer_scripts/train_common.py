@@ -16,15 +16,13 @@ def setup_logger(file_name):
 
 def inner_train_loop(data, labels, model, optimizer, loss_fn):
     optimizer.zero_grad()
-    t1 = time.time()
+    # t1 = time.time()
     output = model(data.cuda(cuda_id))
-    t2 = time.time()
+    # t2 = time.time()
     if isinstance(labels, torch.Tensor):
         labels = labels.cuda(cuda_id)
     loss = loss_fn(output, labels)
-    t3 = time.time()
-    if len(loss) > 1:
-        loss, _ = loss
+    # t3 = time.time()
     sum_loss = 0
     def acc_loss(loss, s):
         if isinstance(loss, dict):
@@ -40,11 +38,11 @@ def inner_train_loop(data, labels, model, optimizer, loss_fn):
     sum_loss.backward()
 
     optimizer.step()
-    t4 = time.time()
+    # t4 = time.time()
 
-    logging.info("--- %s seconds in forward ---" % (t2 - t1))
-    logging.info("--- %s seconds in loss ---" % (t3 - t2))
-    logging.info("--- %s seconds in total ---" % (t4 - t2))
+    # logging.info("--- %s seconds in forward ---" % (t2 - t1))
+    # logging.info("--- %s seconds in loss ---" % (t3 - t2))
+    # logging.info("--- %s seconds in total ---" % (t4 - t2))
 
     return loss
 
